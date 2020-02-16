@@ -2,10 +2,11 @@ RC_USERNAME: "admin"
 RC_PASSWORD: "adminpassword"
 RC_HOST: "http://rocket:3000"
 
-LDAP_BINDUSER: "rocketchat"
+LDAP_BINDDN: "rocketchat"
 LDAP_PASSWORD: "rocketchatpassword"
 LDAP_HOST: "ldap://ldap:389"
 LDAP_GROUP_BASEDN: "ou=groups,dc=example,dc=com"
+LDAP_USERS_BASEDN: "ou=userss,dc=example,dc=com"
 
 CHANNELS_TO_SYNC: # Rocketchat-Channel: LDAP-Group
   INTERNAL_CHANNEL_1: "cn=internal_1"
