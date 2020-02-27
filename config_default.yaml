@@ -7,8 +7,12 @@ LDAP_PASSWORD: "rocketchatpassword"
 LDAP_HOST: "ldap://ldap:389"
 LDAP_GROUP_BASEDN: "ou=groups,dc=example,dc=com"
 LDAP_USERS_BASEDN: "ou=userss,dc=example,dc=com"
+LDAP_USERS_OBJECTCLASSES: ['inetOrgPerson']
+LDAP_GROUP_OBJECTCLASSES: ['groupOfNames']
+
 
 CHANNELS_TO_SYNC: # Rocketchat-Channel: LDAP-Group
-  INTERNAL_CHANNEL_1: "cn=internal_1"
-  MAIN_CHANNEL: "cn=all_users"
-  ADMINS_ONLY: "cn=admins"
+  internal_channel_1: "cn=internal_1"
+  general: "cn=all_users"
+  admins_only: "cn=admins"
+

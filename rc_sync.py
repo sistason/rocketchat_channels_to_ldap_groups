@@ -9,14 +9,13 @@ import sys
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 class RCLDAPSync:
 
     def __init__(self, config_path='', rc_username="", rc_password="", rc_host="http://rocketchat:3000",
                  ldap_binduser="", ldap_password="", ldap_host="ldap://ldap:389", ldap_group_basedn='',
-                 ldap_users_basedn='', channels=None):
+                 ldap_users_basedn='', ldap_group_objectclasses=None, ldap_users_objectclasses=None, channels=None):
         logging.basicConfig(level=logging.DEBUG)
 
         config_path = os.environ.get('CONFIG_PATH', config_path)
@@ -32,6 +31,8 @@ class RCLDAPSync:
             self.ldap_host = os.environ.get('LDAP_HOST', ldap_host)
             self.ldap_group_basedn = os.environ.get('LDAP_GROUP_BASEDN', ldap_group_basedn)
             self.ldap_users_basedn = os.environ.get('LDAP_USERS_BASEDN', ldap_users_basedn)
+            self.ldap_users_objectclasses = os.environ.get['LDAP_USERS_OBJECTCLASSES', ldap_users_objectclasses]
+            self.ldap_group_objectclasses = os.environ.get['LDAP_GROUP_OBJECTCLASSES', ldap_group_objectclasses]
 
             self.channels_to_sync = channels if channels is not None and type(dict) is list else {}
 
@@ -59,21 +60,34 @@ class RCLDAPSync:
         self.ldap_host = config.get('LDAP_HOST', "ldap://ldap:389")
         self.ldap_group_basedn = config['LDAP_GROUP_BASEDN']
         self.ldap_users_basedn = config['LDAP_USERS_BASEDN']
+        self.ldap_users_objectclasses = config['LDAP_USERS_OBJECTCLASSES']
+        self.ldap_group_objectclasses = config['LDAP_GROUP_OBJECTCLASSES']
 
         self.channels_to_sync = config['CHANNELS_TO_SYNC']
 
-    def _get_ldap_group_member_uids(self, group):
-        self.ldap_connection.search(group + ',' + self.ldap_group_basedn, '(objectClass=*)',
+    def _get_ldap_group_member_uids(self, group_dn):
+        self.ldap_connection.search(group_dn, '(objectClass=*)',
                                     attributes=['member', 'memberUid'])
+        if not self.ldap_connection.response:
+            # Group does not exist
+            return None
+
         attrs = self.ldap_connection.response[0].get('attributes', {})
         return [i.split('=', 1)[1].split(',')[0] for i in attrs['member']] + attrs['memberUid']
 
-    def sync_rc_to_ldap(self):
+    def sync_channels_rc_to_ldap(self):
         for rc_channel, ldap_group in self.channels_to_sync.items():
             logger.info(f'Adding RC channel "#{rc_channel}" to LDAP group "{ldap_group}"...')
 
-            ldap_group_members = self._get_ldap_group_member_uids(ldap_group)
+            ldap_group_dn = f"{ldap_group},{self.ldap_group_basedn}"
+            ldap_group_members = self._get_ldap_group_member_uids(ldap_group_dn)
+            if ldap_group_members is None:
+                ldap_group_cn = ldap_group.split('=', 1)[1].split(',')[0]
+                self.ldap_connection.add(ldap_group_dn, object_class=self.ldap_group_objectclasses,
+                                         attributes={'cn': ldap_group_cn, 'members': []})   #TODO: check if empty members conforms
+
             rc_channel_members = self.rocket.channels_members(channel=rc_channel).json().get('members')
+
             logger.debug(f'  RC channel members: {[i["username"] for i in rc_channel_members]}')
             logger.debug(f'  LDAP group members: {ldap_group_members}')
 
@@ -87,7 +101,7 @@ class RCLDAPSync:
 
         self.close()
 
-    def sync_ldap_to_rc(self):
+    def sync_groups_ldap_to_rc(self):
         for rc_channel, ldap_group in self.channels_to_sync.items():
             logger.info(f'Adding LDAP-Group "{ldap_group}" to RC channel "{rc_channel}"...')
 
@@ -108,16 +122,76 @@ class RCLDAPSync:
 
         self.close()
 
+    def _get_ldap_users(self):
+        self.ldap_connection.search(self.ldap_users_basedn,
+                                    f'(&{"".join([f"(objectClass={obc})" for obc in self.ldap_users_objectclasses])})')
+        return dict([(user.get('dn'), user) for user in self.ldap_connection.response])
+
+    def sync_users_rc_to_ldap(self):
+        all_rc_users = self.rocket.users_list().json().get('users', [])
+        all_ldap_users = self._get_ldap_users()
+
+        for user in all_rc_users:
+            if user.get('type') == 'bot':
+                continue
+
+            user_full = self.rocket.users_info(user_id=user.get('_id')).json().get('user')
+
+            user_password = user_full.get('services', {}).get('password', {}).get('bcrypt')
+            if not user_password:
+                # No local RC user
+                continue
+
+            uid = user.get('username')
+            dn = f'uid={uid},{self.ldap_users_basedn}'
+            ldap_password = "{CRYPT}"+user_password
+            mail = user_full.get('emails', [{}])[0].get('address', None)
+            cn = user_full.get('name')
+
+            logger.debug(f'uid:{uid} - cn:{cn} - bcrypt:{user_password}')
+
+            if dn not in all_ldap_users.keys():
+                # Create LDAP Entry
+                self.ldap_connection.add(dn, object_class=self.ldap_users_objectclasses,
+                                         attributes={'cn': cn, 'mail': mail, 'uid': uid,
+                                                     'userPassword': ldap_password})
+                logger.info(f'    Created RC user "{uid}" in LDAP')
+            else:
+                # Update LDAP Entry
+                self.ldap_connection.modify(f"{dn}", {'cn': [(ldap3.MODIFY_REPLACE, [cn])],
+                                                      'mail': [(ldap3.MODIFY_REPLACE, [mail])],
+                                                      'uid': [(ldap3.MODIFY_REPLACE, [uid])],
+                                                      'userPassword': [(ldap3.MODIFY_REPLACE, [ldap_password])]})
+                logger.info(f'    Updated RC user "{uid}" in LDAP')
+
+        self.close()
+
     def close(self):
         self.session.close()
 
 
+def parse_args():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-v', '--verbose', action="store_true")
+    parser.add_argument('-q', '--quiet', action="store_true")
+    parser.add_argument('actions', nargs='+')
+
+    _args = parser.parse_args()
+    if _args.verbose:
+        logger.setLevel(logging.DEBUG)
+    elif _args.quiet:
+        logger.setLevel(logging.ERROR)
+
+    return _args
+
+
 if __name__ == '__main__':
-    if len(sys.argv) == 1 or sys.argv[1] == 'rc2ldap':
-        sync = RCLDAPSync()
-        sync.sync_rc_to_ldap()
-    elif sys.argv[1] == 'ldap2rc':
-        sync = RCLDAPSync()
-        sync.sync_ldap_to_rc()
-    else:
-        print('Unknown argument: Either rc2ldap or ldap2rc!')
+    args = parse_args()
+    sync = RCLDAPSync()
+    if 'u_rc2ldap' in args.actions:
+        sync.sync_users_rc_to_ldap()
+    if 'g_rc2ldap' in args.actions:
+        sync.sync_channels_rc_to_ldap()
+    if 'g_ldap2rc' in args.actions:
+        sync.sync_groups_ldap_to_rc()
