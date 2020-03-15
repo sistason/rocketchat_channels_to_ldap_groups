@@ -86,7 +86,12 @@ class RCLDAPSync:
                 self.ldap_connection.add(ldap_group_dn, object_class=self.ldap_group_objectclasses,
                                          attributes={'cn': ldap_group_cn, 'members': []})   #TODO: check if empty members conforms
 
-            rc_channel_members = self.rocket.channels_members(channel=rc_channel).json().get('members')
+            rc_channel_members_ret = self.rocket.channels_members(channel=rc_channel)
+            if not rc_channel_members_ret.ok:
+                logger.info(f'Channel "#{rc_channel}" in the config is not found on the Rocket.Chat instance! '
+                            f'Misconfiguration? Channel renamed?')
+                continue
+            rc_channel_members = rc_channel_members_ret.json().get('members')
 
             logger.debug(f'  RC channel members: {[i["username"] for i in rc_channel_members]}')
             logger.debug(f'  LDAP group members: {ldap_group_members}')
@@ -105,7 +110,12 @@ class RCLDAPSync:
         for rc_channel, ldap_group in self.channels_to_sync.items():
             logger.info(f'Adding LDAP-Group "{ldap_group}" to RC channel "{rc_channel}"...')
 
-            _channel = self.rocket.channels_info(channel=rc_channel).json().get('channel')
+            _channel = self.rocket.channels_info(channel=rc_channel)
+            if not _channel.ok:
+                logger.info(f'Channel "#{rc_channel}" in the config is not found on the Rocket.Chat instance! '
+                            f'Misconfiguration? Channel renamed?')
+                continue
+            _channel = _channel.json().get('channel')
             rc_channel_id = _channel.get('_id')
             rc_channel_members = self.rocket.channels_members(channel=rc_channel).json().get('members')
             ldap_group_members = self._get_ldap_group_member_uids(ldap_group)
