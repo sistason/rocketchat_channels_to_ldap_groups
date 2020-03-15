@@ -1,4 +1,3 @@
-requests
 rocketchat_API
 ldap3
 pyyaml

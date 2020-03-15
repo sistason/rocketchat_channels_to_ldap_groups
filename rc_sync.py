@@ -2,6 +2,7 @@
 from rocketchat_API.rocketchat import RocketChat
 from requests.sessions import Session
 import ldap3
+from ldap3.utils.conv import escape_bytes, ldap_escape_to_bytes
 import yaml
 import logging
 import os
@@ -124,45 +125,82 @@ class RCLDAPSync:
 
     def _get_ldap_users(self):
         self.ldap_connection.search(self.ldap_users_basedn,
-                                    f'(&{"".join([f"(objectClass={obc})" for obc in self.ldap_users_objectclasses])})')
+                                    f'(&{"".join([f"(objectClass={obc})" for obc in self.ldap_users_objectclasses])})',
+                                    attributes=ldap3.ALL_ATTRIBUTES)
         return dict([(user.get('dn'), user) for user in self.ldap_connection.response])
 
     def sync_users_rc_to_ldap(self):
         all_rc_users = self.rocket.users_list().json().get('users', [])
         all_ldap_users = self._get_ldap_users()
 
+        # Add all from Rocket.Chat to LDAP
         for user in all_rc_users:
+            if user.get('username') != 'kai':
+                continue
             if user.get('type') == 'bot':
                 continue
 
-            user_full = self.rocket.users_info(user_id=user.get('_id')).json().get('user')
+            _api = self.rocket.users_info(user_id=user.get('_id')).json()
+            if not _api.get('success'):
+                logger.error(f'Could not get user info because "{_api.get("error")}"')
+                break
+            user_full = _api.get('user')
 
             user_password = user_full.get('services', {}).get('password', {}).get('bcrypt')
+
             if not user_password:
                 # No local RC user
                 continue
 
             uid = user.get('username')
             dn = f'uid={uid},{self.ldap_users_basedn}'
-            ldap_password = "{CRYPT}"+user_password
+            ldap_password = "{SHA256-BCRYPT}"+user_password
             mail = user_full.get('emails', [{}])[0].get('address', None)
             cn = user_full.get('name')
+            avatar = self.rocket.users_get_avatar(user_id=user.get('_id')).content
+            print(avatar[:10])
+            print(len(avatar))
 
-            logger.debug(f'uid:{uid} - cn:{cn} - bcrypt:{user_password}')
+            avatar = ldap_escape_to_bytes(avatar)
+
+            #TODO: always image or sometimes link?
+            #TODO: get into LDAP, the "right" way :)
+            #avatar = self.session.get(avatar_url).content
+
+            logger.debug(f'uid:{uid} - cn:{cn} - pw:{"{BCRYPT}" if user_password.startswith("$2b$") else user_password[:10]}')
 
             if dn not in all_ldap_users.keys():
                 # Create LDAP Entry
                 self.ldap_connection.add(dn, object_class=self.ldap_users_objectclasses,
                                          attributes={'cn': cn, 'mail': mail, 'uid': uid,
-                                                     'userPassword': ldap_password})
+                                                     'userPassword': ldap_password,
+                                                     'thumbnailPhoto': avatar,
+                                                     'jpegPhoto': avatar})
                 logger.info(f'    Created RC user "{uid}" in LDAP')
             else:
                 # Update LDAP Entry
-                self.ldap_connection.modify(f"{dn}", {'cn': [(ldap3.MODIFY_REPLACE, [cn])],
-                                                      'mail': [(ldap3.MODIFY_REPLACE, [mail])],
-                                                      'uid': [(ldap3.MODIFY_REPLACE, [uid])],
-                                                      'userPassword': [(ldap3.MODIFY_REPLACE, [ldap_password])]})
+                self.ldap_connection.modify(dn, {'cn': [(ldap3.MODIFY_REPLACE, [cn])],
+                                                 'mail': [(ldap3.MODIFY_REPLACE, [mail])],
+                                                 'uid': [(ldap3.MODIFY_REPLACE, [uid])],
+                                                 'userPassword': [(ldap3.MODIFY_REPLACE, [ldap_password])],
+                                                 'thumbnailPhoto': [(ldap3.MODIFY_REPLACE, avatar)],
+                                                 'jpegPhoto': [(ldap3.MODIFY_REPLACE, avatar)]})
                 logger.info(f'    Updated RC user "{uid}" in LDAP')
+
+            sys.exit(0)
+
+        # Delete all the LDAP users not in Rocket.Chat
+        rc_uids = [user.get('username') for user in all_rc_users]
+        remaining = [user for user in all_ldap_users.values()
+                     if user.get('attributes', {}).get('uid', [''])[0] not in rc_uids]
+
+        for ldap_user in remaining:
+            self.ldap_connection.delete(ldap_user.get('dn'))
+            result = self.ldap_connection.result
+            if result and not result.get('result', -1):
+                logger.error(f'Could not delete {ldap_user.get("dn")}:\n\t"{result.get("message")}"!')
+            else:
+                logger.info(f'Deleted from LDAP: {ldap_user.get("attributes", {}).get("uid", [""])[0]}')
 
         self.close()
 
@@ -189,9 +227,9 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
     sync = RCLDAPSync()
-    if 'u_rc2ldap' in args.actions:
+    if 'sync_users_rc_to_ldap' in args.actions:
         sync.sync_users_rc_to_ldap()
-    if 'g_rc2ldap' in args.actions:
+    if 'sync_channels_rc_to_ldap' in args.actions:
         sync.sync_channels_rc_to_ldap()
-    if 'g_ldap2rc' in args.actions:
+    if 'sync_groups_ldap_to_rc' in args.actions:
         sync.sync_groups_ldap_to_rc()
