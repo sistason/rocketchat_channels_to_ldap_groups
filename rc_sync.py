@@ -2,7 +2,6 @@
 from rocketchat_API.rocketchat import RocketChat
 from requests.sessions import Session
 import ldap3
-from ldap3.utils.conv import escape_bytes, ldap_escape_to_bytes
 import yaml
 import logging
 import os
@@ -135,12 +134,14 @@ class RCLDAPSync:
 
         # Add all from Rocket.Chat to LDAP
         for user in all_rc_users:
-            if user.get('username') != 'kai':
-                continue
             if user.get('type') == 'bot':
                 continue
 
-            _api = self.rocket.users_info(user_id=user.get('_id')).json()
+            _api = self.rocket.users_info(user_id=user.get('_id'))
+            if _api.status_code == 404:
+                # Yes, some user are not gettable by id...
+                _api = self.rocket.users_info(username=user.get('username'))
+            _api = _api.json()
             if not _api.get('success'):
                 logger.error(f'Could not get user info because "{_api.get("error")}"')
                 break
@@ -158,10 +159,16 @@ class RCLDAPSync:
             mail = user_full.get('emails', [{}])[0].get('address', None)
             cn = user_full.get('name')
             avatar = self.rocket.users_get_avatar(user_id=user.get('_id')).content
-            print(avatar[:10])
-            print(len(avatar))
 
-            avatar = ldap_escape_to_bytes(avatar)
+            # print(len(avatar))
+
+            # avatar = avatar.decode('utf-8')
+            # print(len(avatar))
+            # from ldap3.utils import conv
+            # from io import BytesIO
+            # from base64 import b64decode, b64encode
+
+            # avatar = conv.escape_filter_chars(avatar, 'UTF-8')
 
             #TODO: always image or sometimes link?
             #TODO: get into LDAP, the "right" way :)
@@ -187,7 +194,7 @@ class RCLDAPSync:
                                                  'jpegPhoto': [(ldap3.MODIFY_REPLACE, avatar)]})
                 logger.info(f'    Updated RC user "{uid}" in LDAP')
 
-            sys.exit(0)
+
 
         # Delete all the LDAP users not in Rocket.Chat
         rc_uids = [user.get('username') for user in all_rc_users]
