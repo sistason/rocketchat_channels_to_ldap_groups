@@ -234,9 +234,11 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
     sync = RCLDAPSync()
-    if 'sync_users_rc_to_ldap' in args.actions:
-        sync.sync_users_rc_to_ldap()
-    if 'sync_channels_rc_to_ldap' in args.actions:
-        sync.sync_channels_rc_to_ldap()
-    if 'sync_groups_ldap_to_rc' in args.actions:
-        sync.sync_groups_ldap_to_rc()
+    # preserve the order
+    for action in args.actions:
+        if 'sync_channels_rc_to_ldap' == action:
+            sync.sync_channels_rc_to_ldap()
+        if 'sync_users_rc_to_ldap' == action:
+            sync.sync_users_rc_to_ldap()
+        if 'sync_groups_ldap_to_rc' == action:
+            sync.sync_groups_ldap_to_rc()
