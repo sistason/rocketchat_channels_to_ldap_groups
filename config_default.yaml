@@ -1,6 +1,8 @@
 RC_USERNAME: "admin"
 RC_PASSWORD: "adminpassword"
 RC_HOST: "http://rocket:3000"
+RC_IGNORE_USERS:
+  - admin
 
 LDAP_BINDDN: "rocketchat"
 LDAP_PASSWORD: "rocketchatpassword"
