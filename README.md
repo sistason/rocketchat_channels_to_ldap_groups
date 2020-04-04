@@ -11,11 +11,21 @@ complementing the already existing LDAP-sync.
 ## Configuration
 
 fill login-data, config-basics and channels-to-sync into your copy of 
-`config_default.yaml`, as environment-variables and as init-parameters 
-to the class itself when imported. Check the RCLDAPSync.init() method to
-get the full list of options.
+`config_default.yaml`, or use the options as environment-variables and
+supply the channels via --channel. Examples:
 
----
+```
+python3 rc_sync.py --config=config.yaml sync_users_rc_to_ldap
+
+OR
+
+RC_USERNAME=admin RC_PASSWORD=foo [etc...] python3 rc_sync.py \
+    --channel admins=cn=admins \
+    --channel channel1=cn=ldap_group \
+    sync_users_rc_to_ldap sync_channels_rc_to_ldap 
+```
+
+You can use --repeat_every_seconds=$SECONDS to run periodically.
 
 ### Groups: Rocket.Chat -> LDAP
 
@@ -44,8 +54,8 @@ authenticate to Rocket.Chat.
 This requires bcrypt to be patched into your LDAP server, as 
 Rocket.Chat uses sha256-bcrypt-hashing for the passwords, which is not 
 supported by LDAP upstream. Get the module via
-[this repo](https://github.com/sistason/openldap-sha256-bcrypt) and add to your 
-container like 
+[this repo](https://github.com/sistason/openldap-sha256-bcrypt) and
+add to your container as
 [described here](https://github.com/osixia/docker-openldap/issues/150).
  
 Load the module and set the `olcPasswordHash` to be `{BCRYPT}` in 

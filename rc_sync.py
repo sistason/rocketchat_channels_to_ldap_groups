@@ -16,6 +16,8 @@ class RCLDAPSync:
 
     @staticmethod
     def from_env(channels, log_level=logging.INFO):
+        if type(channels) is list:
+            channels = {c.split('=', 1) for c in channels}
         return RCLDAPSync(
             RocketChatClient(
                 rc_username=os.environ.get('RC_USERNAME'),
@@ -34,7 +36,7 @@ class RCLDAPSync:
                 ldap_users_objectclasses=os.environ.get('LDAP_USERS_OBJECTCLASSES'),
                 log_level=log_level
             ),
-            channels=channels if channels is not None and type(dict) is list else {}
+            channels=channels if channels is not None and type(channels) is dict else {}
         )
 
     @staticmethod
@@ -149,12 +151,24 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-v', '--verbose', action="store_true")
     parser.add_argument('-q', '--quiet', action="store_true")
+    parser.add_argument('--repeat_every_seconds', type=int)
     parser.add_argument('--config', type=str)
-    parser.add_argument('--channels', nargs='*')
+    parser.add_argument('--channel', nargs='*')
     parser.add_argument('actions', nargs='+')
 
     _args = parser.parse_args()
     return _args
+
+
+def run_actions(sync_, actions):
+    # preserve the order
+    for action in actions:
+        if 'sync_channels_rc_to_ldap' == action:
+            sync_.sync_channels_rc_to_ldap()
+        if 'sync_users_rc_to_ldap' == action:
+            sync_.sync_users_rc_to_ldap()
+        if 'sync_groups_ldap_to_rc' == action:
+            sync_.sync_groups_ldap_to_rc()
 
 
 if __name__ == '__main__':
@@ -171,15 +185,12 @@ if __name__ == '__main__':
     if args.config:
         sync = RCLDAPSync.from_config(args.config, log_level=log_level)
     else:
-        sync = RCLDAPSync.from_env(args.channels, log_level=log_level)
+        sync = RCLDAPSync.from_env(args.channel, log_level=log_level)
 
-    # preserve the order
-    for action in args.actions:
-        if 'sync_channels_rc_to_ldap' == action:
-            sync.sync_channels_rc_to_ldap()
-        if 'sync_users_rc_to_ldap' == action:
-            sync.sync_users_rc_to_ldap()
-        if 'sync_groups_ldap_to_rc' == action:
-            sync.sync_groups_ldap_to_rc()
+    run_actions(sync, args.actions)
+    if args.repeat_every_seconds:
+        import time
+        while not time.sleep(args.repeat_every_seconds):
+            run_actions(sync, args.actions)
 
     sync.close()
