@@ -163,10 +163,10 @@ def parse_args():
 def run_actions(sync_, actions):
     # preserve the order
     for action in actions:
-        if 'sync_channels_rc_to_ldap' == action:
-            sync_.sync_channels_rc_to_ldap()
         if 'sync_users_rc_to_ldap' == action:
             sync_.sync_users_rc_to_ldap()
+        if 'sync_channels_rc_to_ldap' == action:
+            sync_.sync_channels_rc_to_ldap()
         if 'sync_groups_ldap_to_rc' == action:
             sync_.sync_groups_ldap_to_rc()
 

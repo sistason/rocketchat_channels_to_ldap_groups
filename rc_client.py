@@ -85,7 +85,14 @@ class RocketChatClient:
         return avatar.content
 
     def get_all_users(self):
-        all_users = self.rocket.users_list().json().get('users', [])
+        all_users = []
+        users_call = self.rocket.users_list().json()
+        all_users.extend(users_call.get('users', []))
+
+        while users_call.get('total') > users_call.get('count') + users_call.get('offset', 0):
+            users_call = self.rocket.users_list(offset=int(users_call.get('count'))).json()
+            all_users.extend(users_call.get('users', []))
+
         return [self.get_user_details(user) for user in all_users]
 
     def add_user_to_channel(self, username, rc_channel):
