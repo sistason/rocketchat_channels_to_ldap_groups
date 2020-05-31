@@ -65,23 +65,6 @@ class RocketChatClient:
         if avatar.status_code == 404:
             avatar = self.rocket.users_get_avatar(username=user.get('username'))
 
-        #            with open('/home/sistason/kai_rc.jpeg', 'wb') as f:
-        #                f.write(avatar)
-
-        # print(len(avatar))
-
-        # avatar = avatar.decode('utf-8')
-        # print(len(avatar))
-        # from ldap3.utils import conv
-        # from io import BytesIO
-        # from base64 import b64decode, b64encode
-
-        # avatar = conv.escape_filter_chars(avatar, 'UTF-8')
-
-        # TODO: always image or sometimes link?
-        # TODO: get into LDAP, the "right" way :)
-        # avatar = self.session.get(avatar_url).content
-
         return avatar.content
 
     def get_all_users(self):
