@@ -51,6 +51,7 @@ class RocketChatClient:
     def should_be_skipped(self, rc_user):
         return (rc_user is None or
                 'bot' in rc_user.roles or
+                'app' in rc_user.roles or
                 rc_user.username in self.ignore_users or
                 not rc_user.password_hash)
 
