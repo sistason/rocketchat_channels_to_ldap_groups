@@ -15,32 +15,31 @@ logging.getLogger('urllib3').setLevel(logging.INFO)
 class RCLDAPSync:
 
     @staticmethod
-    def from_env(channels, log_level=logging.INFO):
-        if type(channels) is list:
-            channels = {c.split('=', 1) for c in channels}
+    def from_env(sync_, loglevel=logging.INFO):
         return RCLDAPSync(
             RocketChatClient(
-                rc_username=os.environ.get('RC_USERNAME'),
-                rc_password=os.environ.get('RC_PASSWORD'),
-                rc_host=os.environ.get('RC_HOST'),
-                rc_ignore_users=os.environ.get('RC_IGNORE_USERS'),
-                log_level=log_level
+                username=os.environ.get('RC_USERNAME'),
+                password=os.environ.get('RC_PASSWORD'),
+                host=os.environ.get('RC_HOST'),
+                ignore_users=os.environ.get('RC_IGNORE_USERS', []),
+                custom_user_field=os.environ.get('RC_CUSTOM_USER_FIELD'),
+                custom_user_field_conversions=os.environ.get('RC_CUSTOM_USER_FIELD_CONVERSIONS', {}),
+                log_level=loglevel
             ),
             LDAPClient(
-                ldap_binddn=os.environ.get('LDAP_BINDDN'),
-                ldap_password=os.environ.get('LDAP_PASSWORD'),
-                ldap_host=os.environ.get('LDAP_HOST'),
-                ldap_group_basedn=os.environ.get('LDAP_GROUP_BASEDN'),
-                ldap_users_basedn=os.environ.get('LDAP_USERS_BASEDN'),
-                ldap_group_objectclasses=os.environ.get('LDAP_GROUP_OBJECTCLASSES'),
-                ldap_users_objectclasses=os.environ.get('LDAP_USERS_OBJECTCLASSES'),
-                log_level=log_level
+                binddn=os.environ.get('LDAP_BINDDN'),
+                password=os.environ.get('LDAP_PASSWORD'),
+                host=os.environ.get('LDAP_HOST'),
+                base_dn=os.environ.get('LDAP_BASE_DN'),
+                users_objectclasses=os.environ.get('LDAP_USERS_OBJECTCLASSES'),
+                groups_objectclasses=os.environ.get('LDAP_GROUPS_OBJECTCLASSES'),
+                log_level=loglevel
             ),
-            channels=channels if channels is not None and type(channels) is dict else {}
+            sync=sync_ if sync_ is not None and type(sync_) is dict else {}
         )
 
     @staticmethod
-    def from_config(config_path, log_level=logging.INFO):
+    def from_config(config_path, loglevel=logging.INFO):
         with open(config_path, 'r') as stream:
             try:
                 config = yaml.safe_load(stream)
@@ -50,96 +49,170 @@ class RCLDAPSync:
 
         return RCLDAPSync(
             RocketChatClient(
-                rc_username=config['RC_USERNAME'],
-                rc_password=config['RC_PASSWORD'],
-                rc_host=config.get("RC_HOST", "http://rocketchat:3000"),
-                rc_ignore_users=config['RC_IGNORE_USERS'],
-                log_level=log_level
+                username=config.get('RC_USERNAME'),
+                password=config.get('RC_PASSWORD'),
+                host=config.get("RC_HOST"),
+                ignore_users=config.get('RC_IGNORE_USERS'),
+                custom_user_field=config.get('RC_CUSTOM_USER_FIELD'),
+                custom_user_field_conversions=config.get('RC_CUSTOM_USER_FIELD_CONVERSIONS'),
+                log_level=loglevel
             ),
             LDAPClient(
-                ldap_binddn=config['LDAP_BINDDN'],
-                ldap_password=config['LDAP_PASSWORD'],
-                ldap_host=config.get('LDAP_HOST', "ldap://ldap:389"),
-                ldap_group_basedn=config['LDAP_GROUP_BASEDN'],
-                ldap_users_basedn=config['LDAP_USERS_BASEDN'],
-                ldap_group_objectclasses=config['LDAP_GROUP_OBJECTCLASSES'],
-                ldap_users_objectclasses=config['LDAP_USERS_OBJECTCLASSES'],
-                log_level=log_level
+                binddn=config['LDAP_BINDDN'],
+                password=config['LDAP_PASSWORD'],
+                host=config.get('LDAP_HOST'),
+                base_dn=config.get('LDAP_BASE_DN'),
+                default_users_objectclasses=config.get('LDAP_DEFAULT_USERS_OBJECTCLASSES'),
+                default_groups_objectclasses=config.get('LDAP_DEFAULT_GROUPS_OBJECTCLASSES'),
+                default_users_basedn=config.get('LDAP_DEFAULT_USERS_BASEDN'),
+                default_groups_basedn=config.get('LDAP_DEFAULT_GROUPS_BASEDN'),
+                log_level=loglevel
             ),
-            channels=config['CHANNELS_TO_SYNC']
+            sync=config['SYNC']
         )
 
-    def __init__(self, rc_client, ldap_client, channels=None):
+    def __init__(self, rc_client, ldap_client, sync=None):
         self.ldap_client = ldap_client
 
         self.rc_client = rc_client
-        self.rc_ignore_users = rc_client.rc_ignore_users
 
-        self.channels_to_sync = channels
+        self.channels_to_sync = sync
 
     def sync_channels_rc_to_ldap(self):
-        self.ldap_client.all_users = self.ldap_client.get_all_users()
+        for name_, channel_settings in self.channels_to_sync.items():
+            logger.debug(f"Syncing channels from {name_}...")
 
-        for rc_channel, ldap_group in self.channels_to_sync.items():
-            logger.info(f'Adding RC channel "#{rc_channel}" to LDAP group "{ldap_group}"...')
+            self.ldap_client.update_settings(channel_settings)
 
-            ldap_group_members = self.ldap_client.get_group_member_uids(group_name=ldap_group)
-            rc_channel_members = self.rc_client.get_rc_channel_members(rc_channel)
-            if rc_channel_members is None:
-                logger.info(f'Channel "#{rc_channel}" in the config is not found on the Rocket.Chat instance! '
-                            f'Misconfiguration? Channel/Group renamed?')
-                continue
+            for rc_channel, ldap_group in channel_settings.get('channels').items():
+                logger.info(f'Adding RC channel "#{rc_channel}" to LDAP group "{ldap_group},{channel_settings.get("groups_basedn")}"...')
 
-            logger.debug(f'  RC channel members: {[i["username"] for i in rc_channel_members]}')
-            logger.debug(f'  LDAP group members: {ldap_group_members}')
+                ldap_group_members = self.ldap_client.get_group_member_dns(ldap_group)
+                if ldap_group_members is None:
+                    logger.debug(f'LDAP Group "{ldap_group}" was missing, adding...')
+                    if not self.ldap_client.add_group(ldap_group):
+                        logger.error(f'Could not add LDAP Group "{ldap_group}"!')
+                        return
+                    ldap_group_members = []
 
-            for rc_member in rc_channel_members:
-                self.ldap_client.add_rc_user_to_ldap_group(ldap_group, ldap_group_members, rc_member.get('username'))
+                rc_channel_members = self.rc_client.get_rc_channel_members(rc_channel)
+                if rc_channel_members is None:
+                    logger.info(f'Channel "#{rc_channel}" in the config is not found on the Rocket.Chat instance! '
+                                f'Misconfiguration? Channel/Group renamed?')
+                    continue
 
-            self.ldap_client.delete_ldap_users_not_in_rc_channel(ldap_group, rc_channel_members)
+                logger.debug(f'  RC channel members: {[i.get("username") for i in rc_channel_members]}')
+                logger.debug(f'  LDAP group members: {ldap_group_members}')
+
+                dn_to_have = []
+
+                for rc_member in rc_channel_members:
+                    rc_user = self.rc_client.get_rc_user(rc_member)
+                    if self.rc_client.should_be_skipped(rc_user):
+                        continue
+
+                    ldap_user = self.ldap_client.get_user_by_rocketchat_id(rc_user.rocketchat_id)
+                    if ldap_user is None:
+                        dn = None
+                        if self.rc_client.custom_user_field:
+                            dn = self.rc_client.get_dn_of_rc_user_by_custom_field(rc_user)
+                        if not dn:
+                            dn = f'uid={rc_user.username},{channel_settings.get("users_basedn")}'
+
+                        self.ldap_client.add_or_update_user(dn, self._get_ldap_dict(rc_user))
+                    else:
+                        dn = ldap_user.get('dn')
+
+                    dn_to_have.append(dn)
+
+                if dn_to_have == ldap_group_members:
+                    # In sync, everything is the way we want it
+                    continue
+
+                self.ldap_client.set_group_members(ldap_group, dn_to_have)
 
     def sync_groups_ldap_to_rc(self):
-        for rc_channel, ldap_group in self.channels_to_sync.items():
-            logger.info(f'Adding LDAP-Group "{ldap_group}" to RC channel "{rc_channel}"...')
+        for base_dn, channel_settings in self.channels_to_sync.items():
+            self.ldap_client.update_settings(channel_settings)
+            for rc_channel, ldap_group in channel_settings.get('channels').items():
+                logger.info(f'Adding LDAP-Group "{ldap_group},{channel_settings.get("groups_basedn")}" to RC channel "{rc_channel}"...')
 
-            rc_channel_members = self.rc_client.get_rc_channel_members(rc_channel)
-            ldap_group_members = self.ldap_client.get_ldap_group_member_uids(ldap_group)
+                rc_channel_members = self.rc_client.get_rc_channel_members(rc_channel)
+                if rc_channel_members is None:
+                    logger.debug(f'Adding RC group {rc_channel}...')
+                    if not self.rc_client.add_group(rc_channel):
+                        logger.error(f'Could not add RC group {rc_channel}!')
+                        return
+                    rc_channel_members = []
 
-            logger.debug(f'  LDAP group members: {ldap_group_members}')
-            logger.debug(f'  RC channel members: {[i["username"] for i in rc_channel_members]}')
+                ldap_group_members = self.ldap_client.get_group_member_dns(ldap_group)
+                if ldap_group_members is None:
+                    logger.debug(f'LDAP Group "{ldap_group}" is missing, skipping...')
+                    continue
 
-            for member in ldap_group_members:
-                if member not in rc_channel_members:
-                    if self.rc_client.add_user_to_channel(member, rc_channel):
-                        logger.info(f'    Added LDAP user "{member}" to RC channel "#{rc_channel}"')
-                    else:
-                        logger.info(f'    ! LDAP user "{member}" could not be added, has no RC-account yet')
+                logger.debug(f'  LDAP group members: {ldap_group_members}')
+                logger.debug(f'  RC channel members: {[i["username"] for i in rc_channel_members]}')
+
+                rc_channel_member_uids = [i.get('uid') for i in rc_channel_members]
+                for member_uid in [i.split('=', 1)[1].split(',')[0] for i in ldap_group_members]:
+                    if member_uid not in rc_channel_member_uids:
+                        rc_user = self.rc_client.get_rc_user(member_uid)
+                        if self.rc_client.should_be_skipped(rc_user):
+                            continue
+
+                        if self.rc_client.add_userid_to_channel(rc_user.rocketchat_id, rc_channel):
+                            logger.info(f'    Added LDAP user "{member_uid}" to RC channel "#{rc_channel}"')
+                        else:
+                            logger.info(f'    ! LDAP user "{member_uid}" could not be added, has no RC-account yet')
 
     def sync_users_rc_to_ldap(self):
+        if self.rc_client.custom_user_field:
+            # Since the custom user field sets the user_dn, generate all users up front
+            self._add_users_rc_to_ldap_with_custom_field()
+        else:
+            # Iterate through all sync-groups and get user_dn from channels
+            self._add_users_rc_to_ldap_with_channels()
+
+        all_ldap_users = self.ldap_client.get_all_users(self.ldap_client.ldap_base_dn)
+        for ldap_dn, ldap_user in all_ldap_users.items():
+            ldap_uid = ldap_user.get('attributes', {}).get("uid")
+            if type(ldap_uid) is list:
+                ldap_uid = ldap_uid[0]
+            if ldap_uid not in self.rc_client.known_rc_users:
+                self.ldap_client.delete_dn(ldap_dn)
+
+    def _add_users_rc_to_ldap_with_custom_field(self):
         all_rc_users = self.rc_client.get_all_users()
-        rc_users_to_sync = filter(lambda user: not self.rc_client.should_be_skipped(user), all_rc_users)
-        all_ldap_users = self.ldap_client.get_all_users()
+        for rc_user_info in all_rc_users:
+            rc_user = self.rc_client.get_rc_user(rc_user_info)
 
-        for user_full in rc_users_to_sync:
-            dn, ldap_attributes = self._get_user_details(user_full)
-            self.ldap_client.add_or_update_user(all_ldap_users, dn, ldap_attributes)
+            dn = self.rc_client.get_dn_of_rc_user_by_custom_field(rc_user)
+            if dn:
+                self.ldap_client.add_or_update_user(dn, self._get_ldap_dict(rc_user))
 
-        self.ldap_client.delete_users_not_in_rc(all_ldap_users, all_rc_users)
+    def _add_users_rc_to_ldap_with_channels(self):
+        users_added_cache = []
+        for name_, channel_settings in self.channels_to_sync.items():
+            logger.debug(f"Adding users from {name_}...")
+            self.ldap_client.update_settings(channel_settings)
+            for rc_channel, ldap_group in channel_settings.get('channels').items():
+                rc_channel_members = self.rc_client.get_rc_channel_members(rc_channel)
 
-    def _get_user_details(self, user_full):
-        user_password = user_full.get('services', {}).get('password', {}).get('bcrypt')
-        uid = user_full.get('username')
-        dn = f'uid={uid},{self.ldap_client.ldap_users_basedn}'
-        ldap_password = "{SHA256-BCRYPT}" + user_password
-        mail = user_full.get('emails', [{}])[0].get('address', None)
-        cn = user_full.get('name')
-        avatar = self.rc_client.get_user_avatar(user_full)
+                for user_simple in rc_channel_members:
+                    rc_user = self.rc_client.get_rc_user(user_simple)
+                    if not self.rc_client.should_be_skipped(rc_user) and rc_user.username not in users_added_cache:
+                        self.ldap_client.add_or_update_user(f'uid={rc_user.username}', self._get_ldap_dict(rc_user))
+                        users_added_cache.append(rc_user.username)
 
-        logger.debug(f'uid:{uid} - cn:{cn}')
-        return (dn, {'cn': cn, 'mail': mail, 'uid': uid,
-                     'userPassword': ldap_password,
-                     'thumbnailPhoto': avatar,
-                     'jpegPhoto': avatar})
+    def _get_ldap_dict(self, user):
+        avatar = self.rc_client.get_user_avatar(user.raw)
+
+        logger.debug(f'uid:{user.username} - cn:{user.name}')
+        return {'cn': user.name, 'mail': user.mail, 'uid': user.username,
+                'userPassword': "{SHA256-BCRYPT}" + user.password_hash,
+                'thumbnailPhoto': avatar,
+                'jpegPhoto': avatar,
+                'rocketchatId': user.rocketchat_id}
 
     def close(self):
         self.rc_client.session.close()
@@ -154,7 +227,8 @@ def parse_args():
     parser.add_argument('--repeat_every_seconds', type=int)
     parser.add_argument('--config', type=str)
     parser.add_argument('--channel', nargs='*')
-    parser.add_argument('actions', nargs='+')
+    parser.add_argument('actions', nargs='+', choices=['sync_users_rc_to_ldap', 'sync_channels_rc_to_ldap',
+                                                       'sync_groups_ldap_to_rc'])
 
     _args = parser.parse_args()
     return _args
@@ -183,14 +257,14 @@ if __name__ == '__main__':
     logging.basicConfig(level=log_level)
 
     if args.config:
-        sync = RCLDAPSync.from_config(args.config, log_level=log_level)
+        rcldap_sync = RCLDAPSync.from_config(args.config, loglevel=log_level)
     else:
-        sync = RCLDAPSync.from_env(args.channel, log_level=log_level)
+        rcldap_sync = RCLDAPSync.from_env(args.channel, loglevel=log_level)
 
-    run_actions(sync, args.actions)
+    run_actions(rcldap_sync, args.actions)
     if args.repeat_every_seconds:
         import time
         while not time.sleep(args.repeat_every_seconds):
-            run_actions(sync, args.actions)
+            run_actions(rcldap_sync, args.actions)
 
-    sync.close()
+    rcldap_sync.close()

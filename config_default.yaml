@@ -4,17 +4,33 @@ RC_HOST: "http://rocket:3000"
 RC_IGNORE_USERS:
   - admin
 
+# If set, use this custom user field as user base dn
+# Otherwise, use the users_basedn in the SYNC-values
+RC_CUSTOM_USER_FIELD: custom_field_name
+RC_CUSTOM_USER_FIELD_CONVERSIONS: {}
+  # custom_field_value1: ou=users,ou=somevalue,dc=example,dc=com
+  # custom_field_value2: ou=special,ou=custom,dc=example,dc=net
+
 LDAP_BINDDN: "rocketchat"
 LDAP_PASSWORD: "rocketchatpassword"
 LDAP_HOST: "ldap://ldap:389"
-LDAP_GROUP_BASEDN: "ou=groups,dc=example,dc=com"
-LDAP_USERS_BASEDN: "ou=userss,dc=example,dc=com"
-LDAP_USERS_OBJECTCLASSES: ['inetOrgPerson']
-LDAP_GROUP_OBJECTCLASSES: ['groupOfNames']
+# Set the base_dn, then you can omit this trailing part in the SYNC basedns
+LDAP_BASE_DN: "dc=example,dc=org"
+LDAP_DEFAULT_USERS_OBJECTCLASSES: ['inetOrgPerson']
+LDAP_DEFAULT_GROUPS_OBJECTCLASSES: ['groupOfNames']
 
-
-CHANNELS_TO_SYNC: # Rocketchat-Channel: LDAP-Group
-  internal_channel_1: "cn=internal_1"
-  general: "cn=all_users"
-  admins_only: "cn=admins"
-
+SYNC:
+  example-com:
+    # create/search groups under this dn.
+    # NOTE: This expands to dc=example,dc=org (the LDAP_BASE_DN)
+    groups_basedn: "ou=groups"
+    # create/search users under this dn, if RC_CUSTOM_USER_FIELD is unset.
+    users_basedn: "ou=users,dc=example,dc=org"
+    # create/search groups/users with that objectclasses. Omit to use the DEFAULT
+    groups_objectclasses: ['groupOfNames']
+    users_objectclasses: ['inetOrgPerson']
+    channels:
+      # Rocketchat-Channel: LDAP-Group
+      internal_channel_1: "cn=internal_1"
+      general: "cn=all_users"
+      admins_only: "cn=admins"

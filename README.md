@@ -4,8 +4,8 @@ Syncs, very basicly, from Rocket.Chat to LDAP and back,
 complementing the already existing LDAP-sync.
 
 - Sync Rocket.Chat channels to LDAP-groups 
-- Sync LDAP-group memberships to Rocket.Chat channel members
 - Sync Rocket.Chat users to LDAP
+- Sync LDAP-group memberships to Rocket.Chat channel members
 - (LDAP->RC Sync is already builtin)
 
 ## Configuration
@@ -27,14 +27,25 @@ RC_USERNAME=admin RC_PASSWORD=foo [etc...] python3 rc_sync.py \
 
 You can use --repeat_every_seconds=$SECONDS to run periodically.
 
+### RC_CUSTOM_USER_FIELD
+
+Rocket.Chat can be configured to use custom user fields. You can use
+that to select 1 field from which you generate user base_dns.
+For example, you have a custom field "company_branch" and would use
+the RC_CUSTOM_USER_FIELD_CONVERSIONS to set for example the "IT"
+department to use ou=tech_users and the "HR" department to use ou=users
+
 ### Groups: Rocket.Chat -> LDAP
 
-Get the channel-members of the CHANNELS_TO_SYNC and sync to LDAP groups 
-with cn=$channel and members=LDAP-DNs of the Rocket.Chat member-uids.
+Get the channel-members of the SYNC-channels and sync to LDAP groups 
+with dn and members=LDAP-DNs of the Rocket.Chat member-uids.
 
 ### Groups: LDAP -> Rocket.Chat
 
-Sync the members of the LDAP-groups to the CHANNELS_TO_SYNC.
+Sync the members of the LDAP-groups to the SYNC-channels. Rocket.Chat
+already has this functionality built-in, but only for 1 base_dn. Use
+this if your LDAP is more complicated with many subtrees to be handled
+differently
 
 ### Users: Rocket.Chat -> LDAP
 
