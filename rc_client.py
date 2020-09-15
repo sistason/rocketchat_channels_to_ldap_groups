@@ -1,6 +1,8 @@
 from requests import Session
 from rocketchat_API.rocketchat import RocketChat
+from packaging import version
 import logging
+import pymongo
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +19,29 @@ class RCUser:
         self.custom_fields = rc_full_details.get("customFields", {})
         self.roles = rc_full_details.get("roles", [])
 
+        if not self.password_hash:
+            logger.error(f"Cannot get password for {self.username}! Not an admin user or no password available!")
+
+
+class RocketChatMongoClient:
+    def __init__(self, mongo_host="mongo", mongo_user="", mongo_pass=""):
+        mongo_cli = pymongo.MongoClient(mongo_host)
+        self.mongo_db = mongo_cli.get_database("rocketchat")
+
+    def get_rc_user(self, username):
+        users = self.mongo_db.get_collection("users")
+
+        cursor = users.find({"username": username})
+
+        return RCUser(list(cursor)[0])
+
 
 class RocketChatClient:
+    USE_MONGODB = True
+
     def __init__(self, username, password, host="http://rocketchat:3000", ignore_users=None, custom_user_field=None,
-                 custom_user_field_conversions=None, log_level=logging.INFO):
+                 custom_user_field_conversions=None, log_level=logging.INFO,
+                 mongo=None):
         self.username = username
         self.password = password
         self.host = host
@@ -31,6 +52,13 @@ class RocketChatClient:
 
         self.session = Session()
         self.rocket = RocketChat(self.username, self.password, server_url=self.host, session=self.session)
+
+        info_req = self.rocket.info()
+        if info_req.ok:
+            if version.parse(info_req.json().get("info").get("version")) < version.parse("3.4"):
+                self.USE_MONGODB = False
+
+        self.mongo = mongo
 
         self.known_rc_users = {}
 
@@ -82,19 +110,23 @@ class RocketChatClient:
         if username in self.known_rc_users:
             return self.known_rc_users.get(username)
 
-        if type(user) is dict:
-            _api = self.rocket.users_info(user_id=user.get('_id'))
-            if _api.status_code == 404:
-                # Yes, some user are not gettable by id...
-                _api = self.rocket.users_info(username=user.get('username'))
+        if self.USE_MONGODB:
+            rc_user = self.mongo.get_rc_user(username)
         else:
-            _api = self.rocket.users_info(username=user)
+            if type(user) is dict:
+                _api = self.rocket.users_info(user_id=user.get('_id'))
+                if _api.status_code == 404:
+                    # Yes, some user are not gettable by id...
+                    _api = self.rocket.users_info(username=user.get('username'))
+            else:
+                _api = self.rocket.users_info(username=user)
 
-        _api = _api.json()
-        if not _api.get('success'):
-            logger.error(f'Could not get user info for {username} because "{_api.get("error")}"')
-            return
-        rc_user = RCUser(_api.get('user'))
+            _api = _api.json()
+            if not _api.get('success'):
+                logger.error(f'Could not get user info for {username} because "{_api.get("error")}"')
+                return
+            rc_user = RCUser(_api.get('user'))
+
         self.known_rc_users[rc_user.username] = rc_user
         return rc_user
 

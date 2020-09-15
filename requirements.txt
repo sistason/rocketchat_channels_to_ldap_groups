@@ -2,3 +2,5 @@ rocketchat_API
 requests
 ldap3
 pyyaml
+pymongo
+packaging

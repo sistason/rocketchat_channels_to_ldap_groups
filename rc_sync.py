@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 
-from rc_client import RocketChatClient
+from rc_client import RocketChatClient, RocketChatMongoClient
 from ldap_client import LDAPClient
 
 logger = logging.getLogger(__name__)
@@ -24,15 +24,20 @@ class RCLDAPSync:
                 ignore_users=os.environ.get('RC_IGNORE_USERS', []),
                 custom_user_field=os.environ.get('RC_CUSTOM_USER_FIELD'),
                 custom_user_field_conversions=os.environ.get('RC_CUSTOM_USER_FIELD_CONVERSIONS', {}),
-                log_level=loglevel
+                log_level=loglevel,
+                mongo=RocketChatMongoClient(
+                    mongo_user=os.environ.get('MONGO_USERNAME'),
+                    mongo_pass=os.environ.get('MONGO_PASSWORD'),
+                    mongo_host=os.environ.get("MONGO_HOST")
+                )
             ),
             LDAPClient(
                 binddn=os.environ.get('LDAP_BINDDN'),
                 password=os.environ.get('LDAP_PASSWORD'),
                 host=os.environ.get('LDAP_HOST'),
                 base_dn=os.environ.get('LDAP_BASE_DN'),
-                users_objectclasses=os.environ.get('LDAP_USERS_OBJECTCLASSES'),
-                groups_objectclasses=os.environ.get('LDAP_GROUPS_OBJECTCLASSES'),
+                default_users_objectclasses=os.environ.get('LDAP_USERS_OBJECTCLASSES'),
+                default_groups_objectclasses=os.environ.get('LDAP_GROUPS_OBJECTCLASSES'),
                 log_level=loglevel
             ),
             sync=sync_ if sync_ is not None and type(sync_) is dict else {}
@@ -55,7 +60,12 @@ class RCLDAPSync:
                 ignore_users=config.get('RC_IGNORE_USERS'),
                 custom_user_field=config.get('RC_CUSTOM_USER_FIELD'),
                 custom_user_field_conversions=config.get('RC_CUSTOM_USER_FIELD_CONVERSIONS'),
-                log_level=loglevel
+                log_level=loglevel,
+                mongo=RocketChatMongoClient(
+                    mongo_user=config.get('MONGO_USERNAME'),
+                    mongo_pass=config.get('MONGO_PASSWORD'),
+                    mongo_host=config.get("MONGO_HOST")
+                )
             ),
             LDAPClient(
                 binddn=config['LDAP_BINDDN'],
@@ -185,10 +195,17 @@ class RCLDAPSync:
         all_rc_users = self.rc_client.get_all_users()
         for rc_user_info in all_rc_users:
             rc_user = self.rc_client.get_rc_user(rc_user_info)
+            if rc_user is None:
+                logger.warning(f"Skipping user {rc_user_info.get('username')}")
+                continue
 
             dn = self.rc_client.get_dn_of_rc_user_by_custom_field(rc_user)
             if dn:
-                self.ldap_client.add_or_update_user(dn, self._get_ldap_dict(rc_user))
+                try:
+                    self.ldap_client.add_or_update_user(dn, self._get_ldap_dict(rc_user))
+                except TypeError:
+                    print(rc_user_info)
+                    print(rc_user)
 
     def _add_users_rc_to_ldap_with_channels(self):
         users_added_cache = []
