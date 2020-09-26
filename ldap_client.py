@@ -54,7 +54,7 @@ class LDAPClient:
     def add_group(self, group_name):
         group_dn = f"{group_name},{self.ldap_groups_basedn}"
         return self.ldap_connection.add(group_dn, object_class=self.ldap_groups_objectclasses,
-                                        attributes={'cn': group_name})
+                                        attributes={})
 
     def set_group_members(self, group_dn, member_dns):
         if self.ldap_groups_basedn not in group_dn:
