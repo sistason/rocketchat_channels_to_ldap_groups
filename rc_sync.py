@@ -98,13 +98,6 @@ class RCLDAPSync:
                 logger.info(f'Adding RC channel "#{rc_channel}" to LDAP group "{ldap_group},{channel_settings.get("groups_basedn")}"...')
 
                 ldap_group_members = self.ldap_client.get_group_member_dns(ldap_group)
-                if ldap_group_members is None:
-                    logger.debug(f'LDAP Group "{ldap_group}" was missing, adding...')
-                    if not self.ldap_client.add_group(ldap_group):
-                        logger.error(f'Could not add LDAP Group "{ldap_group}"!')
-                        return
-                    ldap_group_members = []
-
                 rc_channel_members = self.rc_client.get_rc_channel_members(rc_channel)
                 if rc_channel_members is None:
                     logger.info(f'Channel "#{rc_channel}" in the config is not found on the Rocket.Chat instance! '
@@ -139,7 +132,9 @@ class RCLDAPSync:
                     # In sync, everything is the way we want it
                     continue
 
-                self.ldap_client.set_group_members(ldap_group, dn_to_have)
+                if not self.ldap_client.set_group_members(ldap_group, dn_to_have, current_members=ldap_group_members):
+                    logger.error(f'Could not add/modify LDAP Group "{ldap_group}"!')
+                    return
 
     def sync_groups_ldap_to_rc(self):
         for base_dn, channel_settings in self.channels_to_sync.items():

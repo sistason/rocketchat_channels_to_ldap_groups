@@ -51,17 +51,17 @@ class LDAPClient:
         return [f"uid={i},{self.ldap_groups_basedn}" for i in attrs.get('memberUid')] + attrs.get('member', [])
         # return [i.split('=', 1)[1].split(',')[0] for i in attrs['member']] + attrs['memberUid']
 
-    def add_group(self, group_name):
-        group_dn = f"{group_name},{self.ldap_groups_basedn}"
-        return self.ldap_connection.add(group_dn, object_class=self.ldap_groups_objectclasses,
-                                        attributes={})
-
-    def set_group_members(self, group_dn, member_dns):
+    def set_group_members(self, group_dn, member_dns, current_members=None):
         if self.ldap_groups_basedn not in group_dn:
             group_dn = ",".join([group_dn, self.ldap_groups_basedn])
 
-        logger.debug(f'Replacing members of {group_dn} with members:\n{member_dns}')
-        return self.ldap_connection.modify(group_dn, {'member': [(ldap3.MODIFY_REPLACE, member_dns)]})
+        if current_members:
+            logger.debug(f'Replacing members of {group_dn} with members:\n{member_dns}')
+            return self.ldap_connection.modify(group_dn, {'member': [(ldap3.MODIFY_REPLACE, member_dns)]})
+        else:
+            logger.debug(f'Adding group {group_dn} with members:\n{member_dns}')
+            return self.ldap_connection.add(group_dn, object_class=self.ldap_groups_objectclasses,
+                                            attributes={'member': member_dns})
 
     def get_user_by_rocketchat_id(self, rocketchat_id):
         self.ldap_connection.search(self.ldap_base_dn, f'(rocketchatId={rocketchat_id})')
