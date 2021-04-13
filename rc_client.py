@@ -151,8 +151,10 @@ class RocketChatClient:
         users_call = self.rocket.users_list().json()
         all_users.extend(users_call.get('users', []))
 
-        while users_call.get('total') > users_call.get('count') + users_call.get('offset', 0):
-            users_call = self.rocket.users_list(offset=int(users_call.get('count'))).json()
+        current_offset = users_call.get('count')
+        while users_call.get('total') > current_offset:
+            users_call = self.rocket.users_list(offset=current_offset).json()
+            current_offset += users_call.get('count')
             all_users.extend(users_call.get('users', []))
 
         return all_users
